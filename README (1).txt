@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+data/prepared/
+data/cache/
+data/captions.txt
+data/raw/*
+!data/raw/README.txt
+models/
+outputs/*
+!outputs/README.txt
+src/pipeline_instantid.py
+ip_adapter/

@@ -1,0 +1,128 @@
+"""
+Step 2 — precompute VAE latents and text embeddings.
+
+    python scripts/02_cache.py
+
+This is the trick that makes SDXL LoRA training fit in 8 GB. We encode
+everything once, dump it to disk, then throw away the VAE and both text
+encoders. During training only the UNet is ever on the GPU, which frees
+about 3 GB.
+
+Takes 3-6 minutes for ~50 images.
+"""
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+from tqdm import tqdm
+from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.config import (  # noqa: E402
+    PREP_DIR, CACHE_DIR, CAPTION_FILE, BASE_MODEL, VAE_MODEL,
+)
+
+DEVICE = "cuda"
+DTYPE = torch.float16
+
+
+def read_captions():
+    if not CAPTION_FILE.exists():
+        sys.exit("\n[X] data/captions.txt missing. Run scripts/01_prepare.py first.\n")
+    pairs = []
+    for ln, line in enumerate(CAPTION_FILE.read_text(encoding="utf-8").splitlines(), 1):
+        line = line.rstrip("\n")
+        if not line.strip():
+            continue
+        if "\t" not in line:
+            sys.exit(f"\n[X] captions.txt line {ln} has no TAB between filename and caption:\n"
+                     f"    {line}\n")
+        fn, cap = line.split("\t", 1)
+        p = PREP_DIR / fn.strip()
+        if not p.exists():
+            print(f"  [!] line {ln}: {fn} not found in data/prepared/, skipping")
+            continue
+        pairs.append((p, cap.strip()))
+    if not pairs:
+        sys.exit("\n[X] No usable caption lines.\n")
+    return pairs
+
+
+@torch.no_grad()
+def cache_latents(pairs):
+    from diffusers import AutoencoderKL
+
+    print("[..] loading VAE")
+    vae = AutoencoderKL.from_pretrained(VAE_MODEL, torch_dtype=DTYPE).to(DEVICE).eval()
+    sf = vae.config.scaling_factor
+
+    meta = []
+    for idx, (path, cap) in enumerate(tqdm(pairs, desc="latents")):
+        img = Image.open(path).convert("RGB")
+        w, h = img.size
+        arr = torch.from_numpy(np.asarray(img, dtype=np.float32))   # (h, w, 3)
+        px = (arr / 127.5 - 1.0).permute(2, 0, 1).unsqueeze(0).to(DEVICE, DTYPE)
+        lat = vae.encode(px).latent_dist.sample() * sf
+        torch.save(lat.squeeze(0).cpu(), CACHE_DIR / f"{idx:03d}.latent.pt")
+        meta.append({"idx": idx, "file": path.name, "caption": cap, "w": w, "h": h})
+
+    del vae
+    torch.cuda.empty_cache()
+    return meta
+
+
+@torch.no_grad()
+def cache_text(meta):
+    from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
+
+    print("[..] loading text encoders")
+    tok1 = CLIPTokenizer.from_pretrained(BASE_MODEL, subfolder="tokenizer")
+    tok2 = CLIPTokenizer.from_pretrained(BASE_MODEL, subfolder="tokenizer_2")
+    te1 = CLIPTextModel.from_pretrained(
+        BASE_MODEL, subfolder="text_encoder", torch_dtype=DTYPE,
+        variant="fp16").to(DEVICE).eval()
+    te2 = CLIPTextModelWithProjection.from_pretrained(
+        BASE_MODEL, subfolder="text_encoder_2", torch_dtype=DTYPE,
+        variant="fp16").to(DEVICE).eval()
+
+    for m in tqdm(meta, desc="text embeds"):
+        prompt = m["caption"]
+        embeds = []
+        pooled = None
+        for tok, te in ((tok1, te1), (tok2, te2)):
+            ids = tok(prompt, padding="max_length", max_length=tok.model_max_length,
+                      truncation=True, return_tensors="pt").input_ids.to(DEVICE)
+            out = te(ids, output_hidden_states=True)
+            embeds.append(out.hidden_states[-2])
+            pooled = out[0]                      # only te2's is the real pooled
+        prompt_embeds = torch.cat(embeds, dim=-1)          # (1, 77, 2048)
+        torch.save(
+            {"prompt_embeds": prompt_embeds.squeeze(0).cpu(),
+             "pooled": pooled.squeeze(0).cpu()},
+            CACHE_DIR / f"{m['idx']:03d}.text.pt",
+        )
+
+    del te1, te2
+    torch.cuda.empty_cache()
+
+
+def main():
+    pairs = read_captions()
+    print(f"[ok] {len(pairs)} caption/image pairs")
+
+    for old in CACHE_DIR.glob("*.pt"):
+        old.unlink()
+
+    meta = cache_latents(pairs)
+    cache_text(meta)
+
+    import json
+    (CACHE_DIR / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+
+    print(f"\n[ok] cached {len(meta)} samples -> data/cache/")
+    print("Next: python scripts/03_train_lora.py")
+
+
+if __name__ == "__main__":
+    main()
