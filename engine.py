@@ -19,7 +19,7 @@ for _d in (RAW_DIR, PREP_DIR, CACHE_DIR, LORA_DIR, INSIGHTFACE_ROOT,
 
 # ---------------------------------------------------------------------
 # The rare token your outfit gets bound to. Must be a nonsense word that
-# SDXL has no prior for. Do not change it after training.
+# SDXL has no prior for. Do not change it after training. 
 # ---------------------------------------------------------------------
 TRIGGER = "ohwxfit"
 
