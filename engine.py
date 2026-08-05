@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
  
 RAW_DIR = ROOT / "data" / "raw"          # you drop your ~50 outfit photos here
-PREP_DIR = ROOT / "data" / "prepared"    # resized images land here
+PREP_DIR = ROOT / "data" / "prepared"    # resized images land here 
 CACHE_DIR = ROOT / "data" / "cache"      # precomputed latents + text embeds
 CAPTION_FILE = ROOT / "data" / "captions.txt"
 LORA_DIR = ROOT / "models" / "lora"
