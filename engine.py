@@ -11,7 +11,7 @@ LORA_DIR = ROOT / "models" / "lora"
 INSIGHTFACE_ROOT = ROOT / "models" / "insightface"
 INSTANTID_DIR = ROOT / "models" / "instantid"
 FACES_DIR = ROOT / "faces"               # you drop face photos here
-OUT_DIR = ROOT / "outputs"
+OUT_DIR = ROOT / "outputs" 
 
 for _d in (RAW_DIR, PREP_DIR, CACHE_DIR, LORA_DIR, INSIGHTFACE_ROOT,
            INSTANTID_DIR, FACES_DIR, OUT_DIR):
